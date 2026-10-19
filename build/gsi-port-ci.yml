@@ -10,23 +10,30 @@
 variables:
   # Branch of https://gitlab.com/ubports/porting/community-ports/halium-generic-adaptation-build-tools
   ADAPTATION_TOOLS_BRANCH: main
+  # Use a shorter temporary BUILD_DIR in case e.g. kernel build fails otherwise like on Fairphone 4
+  # ADAPTATION_TOOLS_USE_TMP_BUILD_DIR: 1
+  # Call the toplevel build.sh wrapper instead of cloned generic one directly when more complex port-specific logic is needed
+  # ADAPTATION_TOOLS_USE_BUILD_WRAPPER: 1
 
 image: ubuntu:22.04
 
 build:
   stage: build
+  tags: [ "ubports" ]
   script:
     - apt update
     - >-
       apt install -y --no-install-recommends
       bc bison build-essential ca-certificates cpio curl
-      fakeroot flex git kmod libssl-dev libtinfo5 lz4 python2 python3 sudo unzip wget xz-utils
+      fakeroot flex git kmod libelf-dev libssl-dev libtinfo5 lz4 python2 python3 sudo unzip wget
+      xz-utils pahole libbpf-dev
     - ln -s python2 /usr/bin/python
     - >-
       git clone -b $ADAPTATION_TOOLS_BRANCH
       https://gitlab.com/ubports/porting/community-ports/halium-generic-adaptation-build-tools.git
       build
-    - ./build/build.sh
+    - >-
+      [ -z "$ADAPTATION_TOOLS_USE_BUILD_WRAPPER" ] && ./build/build.sh || ./build.sh
   artifacts:
     paths:
       - out/*
@@ -59,7 +66,7 @@ devel-flashable:
   needs: [ "build" ]
   script:
     - apt update
-    - apt install -y git img2simg jq sudo wget xz-utils
+    - apt install -y git img2simg jq sudo wget xz-utils zstd
     - >-
       git clone -b $ADAPTATION_TOOLS_BRANCH
       https://gitlab.com/ubports/porting/community-ports/halium-generic-adaptation-build-tools.git
@@ -69,10 +76,11 @@ devel-flashable:
     - mkdir -p out
     - ./build/system-image-from-ota.sh ota/ubuntu_command out
     - mv out/rootfs.img out/ubuntu.img
+    - zstd --ultra -22 -T0 out/ubuntu.img
+    - rm -f out/ubuntu.img
   artifacts:
     paths:
-      - out/boot.img
-      - out/init_boot.img
-      - out/vendor_boot.img
-      - out/ubuntu.img
+      - out/*boot.img
       - out/dtbo.img
+      - out/recovery.img
+      - out/ubuntu.img.zst

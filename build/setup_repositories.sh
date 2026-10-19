@@ -1,11 +1,17 @@
 #!/bin/bash
 set -ex
 
-# shellcheck disable=SC2154
-case $deviceinfo_arch in
-    "armhf") RAMDISK_ARCH="armhf";;
-    "aarch64") RAMDISK_ARCH="arm64";;
-    "x86") RAMDISK_ARCH="i386";;
+kernel_arch="${deviceinfo_kernel_arch:-$deviceinfo_arch}"
+
+case "$kernel_arch" in
+    aarch64|arm64) RAMDISK_ARCH="arm64";;
+    arm) RAMDISK_ARCH="armhf";;
+    x86) RAMDISK_ARCH="i386";;
+esac
+
+case "$kernel_arch" in
+    aarch64) ARCH="arm64" ;;
+    *) ARCH="$kernel_arch" ;;
 esac
 
 clone_if_not_existing() {
@@ -55,14 +61,15 @@ setup_gcc() {
         fetch_tarball_if_not_existing "$deviceinfo_kernel_gcc_toolchain_source"
         # shellcheck disable=SC2154
         GCC_PATH="$TMPDOWN/$deviceinfo_kernel_gcc_toolchain_dir"
-    elif [ "$deviceinfo_arch" = "aarch64" ]; then
+    elif [ "$ARCH" = "arm64" ]; then
         clone_if_not_existing "https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9" "pie-gsi"
         # shellcheck disable=SC2034
         GCC_PATH="$TMPDOWN/aarch64-linux-android-4.9"
         drop_python_wrapper "$GCC_PATH/bin/aarch64-linux-android-gcc"
     fi
 
-    if [ "$deviceinfo_arch" = "aarch64" ] || [ "$deviceinfo_arch" = "arm" ]; then
+    # arm64 also needs 32-bit gcc
+    if [[ "$ARCH" = "arm"* ]]; then
         clone_if_not_existing "https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9" "pie-gsi"
         # shellcheck disable=SC2034
         GCC_ARM32_PATH="$TMPDOWN/arm-linux-androideabi-4.9"
@@ -110,6 +117,15 @@ setup_clang() {
                 CLANG_BRANCH="master-kernel-build-2022"
                 CLANG_REVISION="r450784e"
                 ;;
+            14)
+                CLANG_BRANCH="main-kernel-build-2023"
+                CLANG_REVISION="r487747c"
+                ;;
+            15|16)
+                CLANG_BRANCH="main-kernel-build-2024"
+                CLANG_REVISION="r510928"
+                ;;
+
             *)
                 print_error "Clang is not supported with halium version '$deviceinfo_halium_version'"
                 exit 1
@@ -146,7 +162,7 @@ setup_tooling() {
         if [ -f "dtc_ext" ]; then
             print_info "dtc_ext - already exists, skipping download"
         else
-            curl --location https://android.googlesource.com/platform/prebuilts/misc/+/refs/heads/android10-gsi/linux-x86/dtc/dtc?format=TEXT | base64 --decode > dtc_ext
+            curl --location --output dtc_ext https://github.com/LineageOS/android_prebuilts_misc/raw/lineage-15.1/linux-x86/dtc/dtc
         fi
         chmod +x dtc_ext
         export DTC_EXT="$TMPDOWN/dtc_ext"
@@ -160,8 +176,11 @@ setup_tooling() {
             13)
                 BUILD_TOOLS_BRANCH="master-kernel-build-2022"
                 ;;
-            *)
+            14)
                 BUILD_TOOLS_BRANCH="main-kernel-build-2023"
+                ;;
+            *)
+                BUILD_TOOLS_BRANCH="main-kernel-build-2024"
                 ;;
         esac
 
@@ -201,17 +220,48 @@ setup_ramdisk() {
     print_header "Setting up ramdisk"
 
     # shellcheck disable=SC2154
-    if [ -n "$deviceinfo_prebuilt_boot_ramdisk" ] && [ -f "$deviceinfo_prebuilt_boot_ramdisk" ]; then
+    if [ -n "$deviceinfo_prebuilt_boot_ramdisk" ] && [ -f "$HERE/$deviceinfo_prebuilt_boot_ramdisk" ]; then
         print_message "Using prebuilt ramdisk: $deviceinfo_prebuilt_boot_ramdisk"
-        cp "$deviceinfo_prebuilt_ramdisk" halium-boot-ramdisk.img
+        cp "$HERE/$deviceinfo_prebuilt_boot_ramdisk" halium-boot-ramdisk.img
     elif [ -n "$deviceinfo_prebuilt_boot_ramdisk_source" ]; then
         print_message "Downloading prebuilt ramdisk from: $deviceinfo_prebuilt_boot_ramdisk_source"
         RAMDISK_URL="$deviceinfo_prebuilt_boot_ramdisk_source"
+        curl --location --output halium-boot-ramdisk.img "$RAMDISK_URL"
     else
         print_message "Downloading dynparts ramdisk for devices with dynamic partitions"
         RAMDISK_URL="https://github.com/halium/initramfs-tools-halium/releases/download/dynparts/initrd.img-touch-${RAMDISK_ARCH}"
+        curl --location --output halium-boot-ramdisk.img "$RAMDISK_URL"
     fi
-    curl --location --output halium-boot-ramdisk.img "$RAMDISK_URL"
+}
+
+setup_recovery_ramdisk() {
+    if [ -z "$deviceinfo_use_unified_recovery" ] || ! $deviceinfo_use_unified_recovery; then
+        return
+    fi
+
+    if [ "$RAMDISK_ARCH" != "arm64" ]; then
+	print_error "Unified UBports recovery ramdisk has no $RAMDISK_ARCH build"
+	exit 1
+    fi
+
+    if [[ -f "$HERE/ramdisk-recovery.img" || -f "$HERE/ramdisk-overlay/ramdisk-recovery.img" ]]; then
+	print_error "Remove other ramdisk-recovery.img files from your port tree to use unified UBports recovery ramdisk"
+	exit 1
+    fi
+
+    print_header "Setting up unified UBports recovery ramdisk"
+
+    if [[ -n "$deviceinfo_unified_recovery_ui_density" && "$deviceinfo_unified_recovery_ui_density" != "mdpi" ]]; then
+        clone_if_not_existing "https://github.com/ubports/halium_bootable_recovery" "halium-14.0"
+    fi
+
+    if [ -f ramdisk-recovery.img ]; then
+        print_info "ramdisk-recovery.img - already exists, skipping download"
+	return
+    fi
+
+    : "${deviceinfo_prebuilt_recovery_ramdisk_source:=https://ci.ubports.com/job/UBportsCommunityPortsJenkinsCI/job/ubports%2Fporting%2Fcommunity-ports%2Fjenkins-ci%2Fgeneric_arm64/job/halium-14.0/lastSuccessfulBuild/artifact/ramdisk-recovery.img}"
+    curl --location --output ramdisk-recovery.img "$deviceinfo_prebuilt_recovery_ramdisk_source"
 }
 
 cd "$TMPDOWN"
@@ -219,6 +269,7 @@ cd "$TMPDOWN"
     setup_clang
     setup_tooling
     setup_ramdisk
+    setup_recovery_ramdisk
     setup_kernel
 
     ls .

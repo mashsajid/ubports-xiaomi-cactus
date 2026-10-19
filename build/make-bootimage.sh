@@ -10,13 +10,14 @@ INSTALL_MOD_PATH="$(realpath $5)"
 HERE=$(pwd)
 source "${HERE}/deviceinfo"
 
-case "$deviceinfo_arch" in
-    aarch64*) ARCH="arm64" ;;
-    arm*) ARCH="arm" ;;
-    x86_64) ARCH="x86_64" ;;
-    x86) ARCH="x86" ;;
+kernel_arch="${deviceinfo_kernel_arch:-$deviceinfo_arch}"
+
+case "$kernel_arch" in
+    aarch64) ARCH="arm64" ;;
+    *) ARCH="$kernel_arch" ;;
 esac
 
+[ -f "$TMPDOWN/ramdisk-recovery.img" ] && RECOVERY_RAMDISK="$TMPDOWN/ramdisk-recovery.img"
 [ -f "$HERE/ramdisk-recovery.img" ] && RECOVERY_RAMDISK="$HERE/ramdisk-recovery.img"
 [ -f "$HERE/ramdisk-overlay/ramdisk-recovery.img" ] && RECOVERY_RAMDISK="$HERE/ramdisk-overlay/ramdisk-recovery.img"
 
@@ -33,16 +34,50 @@ case "${deviceinfo_ramdisk_compression:=gzip}" in
         ;;
 esac
 
-if [ -d "$HERE/ramdisk-recovery-overlay" ] && [ -e "$RECOVERY_RAMDISK" ]; then
+case "${deviceinfo_recovery_ramdisk_compression:=gzip}" in
+    gzip)
+        REC_COMPRESSION_CMD="gzip -9"
+        REC_EXT="gz"
+        ;;
+    xz)
+        REC_COMPRESSION_CMD="xz --check=crc32 -9"
+        REC_EXT="xz"
+        ;;
+    *)
+        echo "Unsupported deviceinfo_recovery_ramdisk_compression value: '$deviceinfo_recovery_ramdisk_compression'"
+        exit 1
+        ;;
+esac
+
+avb_add_hash_footer() {
+    local bootimg="$1" bytes="$2" part rsa4096_key extra_args
+    [ -z "$bytes" ] && return
+
+    if [ "$deviceinfo_bootimg_tailtype" = "SEAndroid" ]; then
+        printf 'SEANDROIDENFORCE' >> "$bootimg"
+        return
+    fi
+
+    part="${bootimg##*/}"; part="${part%.img}"; rsa4096_key="$HERE/rsa4096_${part}.pem"
+    [ -f "$rsa4096_key" ] && extra_args="--key $rsa4096_key --algorithm SHA256_RSA4096"
+    "$TMPDOWN/avb/avbtool" add_hash_footer --image "$bootimg" --partition_name "$part" --partition_size "$bytes" $extra_args
+}
+
+if [ -e "$RECOVERY_RAMDISK" ]; then
     rm -rf "$TMPDOWN/ramdisk-recovery"
     mkdir -p "$TMPDOWN/ramdisk-recovery"
     cd "$TMPDOWN/ramdisk-recovery"
 
     HAS_DYNAMIC_PARTITIONS=false
-    [[ "$deviceinfo_kernel_cmdline" == *"systempart=/dev/mapper"* ]] && HAS_DYNAMIC_PARTITIONS=true
+    [[ "$deviceinfo_kernel_cmdline $deviceinfo_kernel_vendor_cmdline" == *"systempart=/dev/mapper"* ]] && HAS_DYNAMIC_PARTITIONS=true
+    HAS_AB_SLOTS=false
+    grep -q "slotselect" "$HERE/ramdisk-recovery-overlay/system/etc/recovery.fstab" 2>/dev/null && HAS_AB_SLOTS=true || true
 
     fakeroot -- bash <<EOF
 gzip -dc "$RECOVERY_RAMDISK" | cpio -i
+if [[ -n "$deviceinfo_unified_recovery_ui_density" && "$deviceinfo_unified_recovery_ui_density" != "mdpi" ]]; then
+    cp "$TMPDOWN/halium_bootable_recovery/res-$deviceinfo_unified_recovery_ui_density/images"/* "$TMPDOWN/ramdisk-recovery/res/images"
+fi
 cp -r "$HERE/ramdisk-recovery-overlay"/* "$TMPDOWN/ramdisk-recovery"
 
 # Set values in prop.default based on deviceinfo
@@ -54,8 +89,17 @@ echo "ro.product.manufacturer=$deviceinfo_manufacturer" >> prop.default
 echo "ro.product.model=$deviceinfo_name" >> prop.default
 echo "ro.product.name=halium_$deviceinfo_codename" >> prop.default
 [ "$HAS_DYNAMIC_PARTITIONS" = true ] && echo "ro.boot.dynamic_partitions=true" >> prop.default
+if [ "$deviceinfo_use_unified_recovery" = "true" ]; then
+    echo "ro.build.version.release=$deviceinfo_halium_version" >> prop.default
+    echo "ro.build.version.incremental=ci.ubports.\$(date --utc -d "\$(sed -n 's/ro.build.date=//p' prop.default | tail -1)" '+%Y%m%d.%H%M%S')" >> prop.default
+    echo "ro.recovery.usb.vid=18D1" >> prop.default
+    echo "ro.recovery.usb.adb.pid=D001" >> prop.default
+    echo "ro.recovery.usb.fastboot.pid=4EE0" >> prop.default
+    echo "service.adb.root=1" >> prop.default
+    echo "ro.build.ab_update=$HAS_AB_SLOTS" >> prop.default
+fi
 
-find . | cpio -o -H newc | gzip -9 > "$TMPDOWN/ramdisk-recovery.img-merged"
+find . | cpio -o -H newc | $REC_COMPRESSION_CMD > "$TMPDOWN/ramdisk-recovery.img-merged"
 EOF
     if [ ! -f "$HERE/ramdisk-overlay/ramdisk-recovery.img" ]; then
         RECOVERY_RAMDISK="$TMPDOWN/ramdisk-recovery.img-merged"
@@ -63,6 +107,20 @@ EOF
         mv "$HERE/ramdisk-overlay/ramdisk-recovery.img" "$TMPDOWN/ramdisk-recovery.img-original"
         cp "$TMPDOWN/ramdisk-recovery.img-merged" "$HERE/ramdisk-overlay/ramdisk-recovery.img"
     fi
+fi
+
+if [ -e "$RECOVERY_RAMDISK" ] && ([ "$deviceinfo_bootimg_has_init_boot_partition" = "true" ] || ([ "$deviceinfo_use_unified_recovery" = "true" ] && [ "${deviceinfo_has_recovery_partition:-false}" = "false" ])); then
+    mkdir -p "$TMPDOWN/recovery-ramdisk-fragment"
+    if [ "$deviceinfo_recovery_ramdisk_compression" = "gzip" ]; then
+        cp "$RECOVERY_RAMDISK" "$TMPDOWN/recovery-ramdisk-fragment/ramdisk-recovery.img"
+    else
+        # Name the ramdisk after its actual compression
+        cp "$RECOVERY_RAMDISK" "$TMPDOWN/recovery-ramdisk-fragment/ramdisk-recovery.cpio.$REC_EXT"
+    fi
+
+    cd "$TMPDOWN/recovery-ramdisk-fragment"
+    find . | cpio -o -H newc | $COMPRESSION_CMD > "$RECOVERY_RAMDISK-fragment"
+    RECOVERY_RAMDISK="$RECOVERY_RAMDISK-fragment"
 fi
 
 if [ "$deviceinfo_ramdisk_compression" != "gzip" ]; then
@@ -82,6 +140,12 @@ if [ -d "$HERE/ramdisk-overlay" ]; then
     fi
 fi
 
+if [ -e "$RECOVERY_RAMDISK" ] && [ "$deviceinfo_use_unified_recovery" = "true" ] && [ "${deviceinfo_has_recovery_partition:-false}" = "false" ] && [ "${deviceinfo_bootimg_has_init_boot_partition:-false}" = "false" ]; then
+    cp "$RAMDISK" "${RAMDISK}-recovery"
+    RAMDISK="${RAMDISK}-recovery"
+    cat "$RECOVERY_RAMDISK" >> "$RAMDISK"
+fi
+
 # Create ramdisk for vendor_boot.img
 if [ -d "$HERE/vendor-ramdisk-overlay" ]; then
     VENDOR_RAMDISK="$TMPDOWN/ramdisk-vendor_boot.img"
@@ -98,7 +162,7 @@ if [ -d "$HERE/vendor-ramdisk-overlay" ]; then
         module_files=("$modules/modules.alias" "$modules/modules.dep" "$modules/modules.softdep")
         set +x
         while read -r mod; do
-            mod_path="$(echo -e "$all_modules" | grep "/$mod" || true)" # ".../kernel/.../mod.ko"
+            mod_path="$(echo -e "$all_modules" | grep "/${mod%.ko}.ko" || true)" # ".../kernel/.../mod.ko"
             if [ -z "$mod_path" ]; then
                 echo "Missing the module file $mod included in modules.load"
                 continue
@@ -136,6 +200,10 @@ fi
 
 if [ -n "$deviceinfo_kernel_image_name" ]; then
     KERNEL="$KERNEL_OBJ/arch/$ARCH/boot/$deviceinfo_kernel_image_name"
+    # Handle lz4 compression if needed
+    if [ "$deviceinfo_kernel_image_name" == "Image.lz4" ] && [ ! -e "$KERNEL" ]; then
+        lz4 -l -9 "$KERNEL_OBJ/arch/$ARCH/boot/Image" "$KERNEL"
+    fi
 else
     # Autodetect kernel image name for boot.img
     if [ "$deviceinfo_bootimg_header_version" -ge 2 ]; then
@@ -182,11 +250,14 @@ fi
 MKBOOTIMG="$TMPDOWN/android_system_tools_mkbootimg/mkbootimg.py"
 EXTRA_ARGS=""
 EXTRA_VENDOR_ARGS=""
+EXTRA_VENDOR_KERNEL_ARGS=""
+INIT_BOOT_IMAGE=""
 
 if [ "$deviceinfo_bootimg_header_version" -le 2 ]; then
     EXTRA_ARGS+=" --base $deviceinfo_flash_offset_base --kernel_offset $deviceinfo_flash_offset_kernel --ramdisk_offset $deviceinfo_flash_offset_ramdisk --second_offset $deviceinfo_flash_offset_second --tags_offset $deviceinfo_flash_offset_tags --pagesize $deviceinfo_flash_pagesize"
 else
-    EXTRA_VENDOR_ARGS+=" --base $deviceinfo_flash_offset_base --kernel_offset $deviceinfo_flash_offset_kernel --ramdisk_offset $deviceinfo_flash_offset_ramdisk --tags_offset $deviceinfo_flash_offset_tags --pagesize $deviceinfo_flash_pagesize --dtb $DTB --dtb_offset $deviceinfo_flash_offset_dtb"
+    EXTRA_VENDOR_ARGS+=" --base $deviceinfo_flash_offset_base --kernel_offset $deviceinfo_flash_offset_kernel --ramdisk_offset $deviceinfo_flash_offset_ramdisk --tags_offset $deviceinfo_flash_offset_tags --pagesize $deviceinfo_flash_pagesize --dtb_offset $deviceinfo_flash_offset_dtb"
+    EXTRA_VENDOR_KERNEL_ARGS+=" --dtb $DTB"
 fi
 
 if [ "$deviceinfo_bootimg_header_version" -eq 4 ]; then
@@ -207,40 +278,54 @@ if [ -n "$deviceinfo_bootimg_board" ]; then
     EXTRA_ARGS+=" --board $deviceinfo_bootimg_board"
 fi
 
+# Historically it was impossible to set boot.img cmdline on GKI ports; keep the
+# status quo also working for now with below while existing ports update their
+# deviceinfo to explicitly target the vendor_boot.img one instead.
+if [[ -d "$HERE/vendor-ramdisk-overlay" && -z "$deviceinfo_kernel_vendor_cmdline" ]]; then
+    deviceinfo_kernel_vendor_cmdline="$deviceinfo_kernel_cmdline"
+    deviceinfo_kernel_cmdline=""
+fi
+
 if [ "$deviceinfo_bootimg_header_version" -le 2 ]; then
     "$MKBOOTIMG" --kernel "$KERNEL" --ramdisk "$RAMDISK" --cmdline "$deviceinfo_kernel_cmdline" --header_version $deviceinfo_bootimg_header_version -o "$OUT" --os_version $deviceinfo_bootimg_os_version --os_patch_level $deviceinfo_bootimg_os_patch_level $EXTRA_ARGS
 else
-    if [ -n "$deviceinfo_bootimg_has_init_boot_partition" ] && [ "$deviceinfo_bootimg_has_init_boot_partition" == "true" ]; then
-        "$MKBOOTIMG" --kernel "$KERNEL" --header_version $deviceinfo_bootimg_header_version -o "$OUT" --os_version $deviceinfo_bootimg_os_version --os_patch_level $deviceinfo_bootimg_os_patch_level $EXTRA_ARGS
-        "$MKBOOTIMG" --ramdisk "$RAMDISK" --header_version $deviceinfo_bootimg_header_version -o "$(dirname "$OUT")/init_$(basename "$OUT")"
+    if ([ -n "$deviceinfo_bootimg_has_init_boot_partition" ] && [ "$deviceinfo_bootimg_has_init_boot_partition" == "true" ]) || [ -n "$deviceinfo_init_boot_partition_size" ]; then
+        INIT_BOOT_IMAGE="$(dirname "$OUT")/init_$(basename "$OUT")"
+        "$MKBOOTIMG" --kernel "$KERNEL"  --cmdline "$deviceinfo_kernel_cmdline" --header_version $deviceinfo_bootimg_header_version -o "$OUT" --os_version $deviceinfo_bootimg_os_version --os_patch_level $deviceinfo_bootimg_os_patch_level $EXTRA_ARGS
+        "$MKBOOTIMG" --ramdisk "$RAMDISK" --header_version $deviceinfo_bootimg_header_version -o "$INIT_BOOT_IMAGE"
     else
-        "$MKBOOTIMG" --kernel "$KERNEL" --ramdisk "$RAMDISK" --header_version $deviceinfo_bootimg_header_version -o "$OUT" --os_version $deviceinfo_bootimg_os_version --os_patch_level $deviceinfo_bootimg_os_patch_level $EXTRA_ARGS
+        "$MKBOOTIMG" --kernel "$KERNEL" --ramdisk "$RAMDISK"  --cmdline "$deviceinfo_kernel_cmdline" --header_version $deviceinfo_bootimg_header_version -o "$OUT" --os_version $deviceinfo_bootimg_os_version --os_patch_level $deviceinfo_bootimg_os_patch_level $EXTRA_ARGS
     fi
 
+    VENDOR_RAMDISK_ARGS=()
     if [ -n "$VENDOR_RAMDISK" ]; then
-        VENDOR_RAMDISK_ARGS=()
         if [ "$deviceinfo_bootimg_header_version" -eq 3 ]; then
             VENDOR_RAMDISK_ARGS=(--vendor_ramdisk "$VENDOR_RAMDISK")
         else
             VENDOR_RAMDISK_ARGS=(--ramdisk_type platform --ramdisk_name '' --vendor_ramdisk_fragment "$VENDOR_RAMDISK")
         fi
-        "$MKBOOTIMG" "${VENDOR_RAMDISK_ARGS[@]}" --vendor_cmdline "$deviceinfo_kernel_cmdline" --header_version $deviceinfo_bootimg_header_version --vendor_boot "$(dirname "$OUT")/vendor_$(basename "$OUT")" $EXTRA_VENDOR_ARGS
+    fi
+    if [ -e "$RECOVERY_RAMDISK" ] && [ "$deviceinfo_bootimg_has_init_boot_partition" = "true" ]; then
+        VENDOR_RAMDISK_ARGS+=(--ramdisk_type recovery --ramdisk_name 'recovery' --vendor_ramdisk_fragment "$RECOVERY_RAMDISK")
+    fi
+    if [ ${#VENDOR_RAMDISK_ARGS[@]} -ge 1 ]; then
+        [ "$deviceinfo_bootimg_has_vendor_kernel_boot_partition" != "true" ] && VENDOR_RAMDISK_ARGS+=($EXTRA_VENDOR_KERNEL_ARGS)
+        VENDOR_BOOT_IMAGE="$(dirname "$OUT")/vendor_$(basename "$OUT")"
+        "$MKBOOTIMG" "${VENDOR_RAMDISK_ARGS[@]}" --vendor_cmdline "$deviceinfo_kernel_vendor_cmdline" --header_version $deviceinfo_bootimg_header_version --vendor_boot "$VENDOR_BOOT_IMAGE" $EXTRA_VENDOR_ARGS
+        avb_add_hash_footer "$VENDOR_BOOT_IMAGE" "$deviceinfo_vendor_boot_partition_size"
     fi
 fi
 
 if [ -n "$deviceinfo_bootimg_partition_size" ]; then
-    if [ "$deviceinfo_bootimg_tailtype" == "SEAndroid" ]
-    then
-        printf 'SEANDROIDENFORCE' >> "$OUT"
-    else
-        EXTRA_ARGS=""
-        [ -f "$HERE/rsa4096_boot.pem" ] && EXTRA_ARGS=" --key $HERE/rsa4096_boot.pem --algorithm SHA256_RSA4096"
-        python3 "$TMPDOWN/avb/avbtool" add_hash_footer --image "$OUT" --partition_name boot --partition_size $deviceinfo_bootimg_partition_size $EXTRA_ARGS
+    avb_add_hash_footer "$OUT" "$deviceinfo_bootimg_partition_size"
 
-        if [ -n "$deviceinfo_bootimg_append_vbmeta" ] && $deviceinfo_bootimg_append_vbmeta; then
-            python3 "$TMPDOWN/avb/avbtool" append_vbmeta_image --image "$OUT" --partition_size "$deviceinfo_bootimg_partition_size" --vbmeta_image "$TMPDOWN/vbmeta.img"
-        fi
+    if [ -n "$deviceinfo_bootimg_append_vbmeta" ] && $deviceinfo_bootimg_append_vbmeta; then
+        "$TMPDOWN/avb/avbtool" append_vbmeta_image --image "$OUT" --partition_size "$deviceinfo_bootimg_partition_size" --vbmeta_image "$TMPDOWN/vbmeta.img"
     fi
+fi
+
+if [ -n "$INIT_BOOT_IMAGE" ]; then
+    avb_add_hash_footer "$INIT_BOOT_IMAGE" "${deviceinfo_init_boot_partition_size:-$((8*$((2**20))))}"
 fi
 
 if [ -n "$deviceinfo_has_recovery_partition" ] && $deviceinfo_has_recovery_partition; then
@@ -248,27 +333,17 @@ if [ -n "$deviceinfo_has_recovery_partition" ] && $deviceinfo_has_recovery_parti
     EXTRA_ARGS=""
 
     if [ "$deviceinfo_bootimg_header_version" -ge 2 ]; then
-        EXTRA_ARGS+=" --header_version $deviceinfo_bootimg_header_version --dtb $DTB --dtb_offset $deviceinfo_flash_offset_dtb"
+        EXTRA_ARGS+=" --header_version 2 --dtb $DTB --dtb_offset $deviceinfo_flash_offset_dtb"
     fi
 
     if [ "$deviceinfo_bootimg_header_version" -eq 0 ] && [ -n "$DT" ]; then
         EXTRA_ARGS+=" --header_version 0 --dt $DT"
     fi
 
-    if [ "$deviceinfo_bootimg_header_version" -le 2 ] && [ -n "$DTBO" ]; then
+    if [ -n "$DTBO" ]; then
         EXTRA_ARGS+=" --recovery_dtbo $DTBO"
     fi
 
     "$MKBOOTIMG" --kernel "$KERNEL" --ramdisk "$RECOVERY_RAMDISK" --base $deviceinfo_flash_offset_base --kernel_offset $deviceinfo_flash_offset_kernel --ramdisk_offset $deviceinfo_flash_offset_ramdisk --second_offset $deviceinfo_flash_offset_second --tags_offset $deviceinfo_flash_offset_tags --pagesize $deviceinfo_flash_pagesize --cmdline "$deviceinfo_kernel_cmdline" -o "$RECOVERY" --os_version $deviceinfo_bootimg_os_version --os_patch_level $deviceinfo_bootimg_os_patch_level $EXTRA_ARGS
-
-    if [ -n "$deviceinfo_recovery_partition_size" ]; then
-        EXTRA_ARGS=""
-        if [ "$deviceinfo_bootimg_tailtype" == "SEAndroid" ]
-        then
-            printf 'SEANDROIDENFORCE' >> "$RECOVERY"
-        else
-            [ -f "$HERE/rsa4096_recovery.pem" ] && EXTRA_ARGS=" --key $HERE/rsa4096_recovery.pem --algorithm SHA256_RSA4096"
-            python3 "$TMPDOWN/avb/avbtool" add_hash_footer --image "$RECOVERY" --partition_name recovery --partition_size $deviceinfo_recovery_partition_size $EXTRA_ARGS
-        fi
-    fi
+    avb_add_hash_footer "$RECOVERY" "$deviceinfo_recovery_partition_size"
 fi

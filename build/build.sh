@@ -2,8 +2,9 @@
 set -xe
 shopt -s extglob
 
-BUILD_DIR=
-OUT=
+BUILD_DIR=workdir
+OUT=out
+DEVICE=
 ONLY_CLONE=
 ONLY_KERNEL=
 MENUCONFIG=
@@ -11,7 +12,8 @@ MENUCONFIG=
 while [ $# -gt 0 ]
 do
     case "$1" in
-    (-b) BUILD_DIR="$(realpath "$2")"; shift;;
+    (-b) BUILD_DIR="$2"; shift;;
+    (-d) DEVICE="$2"; shift;;
     (-o) OUT="$2"; shift;;
     (-c) ONLY_CLONE="true";;
     (-k) ONLY_KERNEL="true";;
@@ -22,20 +24,20 @@ do
     shift
 done
 
-OUT="$(realpath "$OUT" 2>/dev/null || echo 'out')"
-mkdir -p "$OUT"
-
-if [ -z "$BUILD_DIR" ]; then
-    TMP=$(mktemp -d)
-    TMPDOWN=$(mktemp -d)
+if [ "$ADAPTATION_TOOLS_USE_TMP_BUILD_DIR" ]; then
+    BUILD_DIR="$(mktemp -d)"
 else
-    TMP="$BUILD_DIR/tmp"
-    # Clean up installation dir in case of local builds
-    rm -rf "$TMP"
-    mkdir -p "$TMP"
-    TMPDOWN="$BUILD_DIR/downloads"
-    mkdir -p "$TMPDOWN"
+    BUILD_DIR="$(realpath "$BUILD_DIR")"
 fi
+OUT="$(realpath "$OUT")"
+mkdir -p "$BUILD_DIR" "$OUT"
+
+TMP="$BUILD_DIR/tmp"
+# Clean up installation dir in case of local builds
+[ -d "$TMP" ] && rm -rf "$TMP"
+mkdir -p "$TMP"
+TMPDOWN="$BUILD_DIR/downloads"
+mkdir -p "$TMPDOWN"
 
 HERE=$(pwd)
 SCRIPT="$(dirname "$(realpath "$0")")"/build
@@ -44,6 +46,13 @@ if [ ! -d "$SCRIPT" ]; then
 fi
 
 mkdir -p "${TMP}/system" "${TMP}/partitions"
+
+if [ -n "$DEVICE" ]; then
+    if [ ! -f "${HERE}/deviceinfo-${DEVICE}" ]; then
+        echo "$0: Error: no deviceinfo-${DEVICE} in ${HERE}" 1>&2; exit 1
+    fi
+    ln -sf "deviceinfo-${DEVICE}" "${HERE}/deviceinfo"
+fi
 
 source "${HERE}/deviceinfo"
 source "$SCRIPT/common_functions.sh"
@@ -59,7 +68,7 @@ fi
 if $deviceinfo_kernel_clang_compile; then
     if [ -n "$deviceinfo_kernel_llvm_compile" ] && $deviceinfo_kernel_llvm_compile; then
         # Restrict available binaries in PATH to make builds less susceptible to host differences
-        ALLOWED_HOST_TOOLS="bash git perl sh sync tar"
+        ALLOWED_HOST_TOOLS="bash git perl sh sync tar yes"
 
         HOST_TOOLS=${TMPDOWN}/host_tools
         rm -rf ${HOST_TOOLS}
@@ -107,36 +116,6 @@ fi
 if [ "$ONLY_KERNEL" = "true" ]; then
     exit 0
 fi
-
-cp -av overlay/* "${TMP}/"
-
-INITRC_PATHS="
-${TMP}/system/opt/halium-overlay/system/etc/init
-${TMP}/system/usr/share/halium-overlay/system/etc/init
-${TMP}/system/opt/halium-overlay/vendor/etc/init
-${TMP}/system/usr/share/halium-overlay/vendor/etc/init
-${TMP}/system/android/system/etc/init
-${TMP}/system/android/vendor/etc/init
-"
-while IFS= read -r path ; do
-    if [ -d "$path" ]; then
-        find "$path" -type f -exec chmod 644 {} \;
-    fi
-done <<< "$INITRC_PATHS"
-
-BUILDPROP_PATHS="
-${TMP}/system/opt/halium-overlay/system
-${TMP}/system/usr/share/halium-overlay/system
-${TMP}/system/opt/halium-overlay/vendor
-${TMP}/system/usr/share/halium-overlay/vendor
-${TMP}/system/android/system
-${TMP}/system/android/vendor
-"
-while IFS= read -r path ; do
-    if [ -d "$path" ]; then
-        find "$path" -type f \( -name "prop.halium" -o -name "build.prop" \) -exec chmod 600 {} \;
-    fi
-done <<< "$BUILDPROP_PATHS"
 
 if [ -z "$deviceinfo_use_overlaystore" ]; then
     # create device tarball for https://wiki.debian.org/UsrMerge rootfs

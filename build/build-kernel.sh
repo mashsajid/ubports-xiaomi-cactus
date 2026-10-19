@@ -13,23 +13,23 @@ OUT="${TMPDOWN}/KERNEL_OBJ"
 
 mkdir -p "$OUT"
 
-case "$deviceinfo_arch" in
-    aarch64*) ARCH="arm64" ;;
-    arm*) ARCH="arm" ;;
-    x86_64) ARCH="x86_64" ;;
-    x86) ARCH="x86" ;;
+kernel_arch="${deviceinfo_kernel_arch:-$deviceinfo_arch}"
+
+case "$kernel_arch" in
+    aarch64) ARCH="arm64" ;;
+    *) ARCH="$kernel_arch" ;;
 esac
 
 if [ -n "$deviceinfo_kernel_clang_compile" ] && $deviceinfo_kernel_clang_compile; then
     # Newer Android kernels no longer support setting CLANG_TRIPLE
     if grep -q CLANG_TRIPLE "$KERNEL_DIR/Makefile"; then
-        : "${CLANG_TRIPLE:=${deviceinfo_arch}-linux-gnu-}"
+        : "${CLANG_TRIPLE:=${kernel_arch}-linux-gnu-}"
     else
-        : "${CROSS_COMPILE:=${deviceinfo_arch}-linux-gnu-}"
+        : "${CROSS_COMPILE:=${kernel_arch}-linux-gnu-}"
     fi
 fi
 
-: "${CROSS_COMPILE:=${deviceinfo_arch}-linux-android-}"
+: "${CROSS_COMPILE:=${kernel_arch}-linux-android-}"
 export ARCH CLANG_TRIPLE CROSS_COMPILE
 
 if [ "$ARCH" == "arm64" ]; then

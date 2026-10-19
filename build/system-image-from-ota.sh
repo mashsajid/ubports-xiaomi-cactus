@@ -182,10 +182,19 @@ do
                 system)
                     FULL_IMAGE=1
                     rm -f "$OUT/rootfs.img"
+                    truncate -s "${deviceinfo_system_partition_size:-3584M}" "$OUT/rootfs.img"
+
+                    sector_size_arg=""
                     # shellcheck disable=SC2154
-                    [ "$deviceinfo_halium_version" -eq 9 ] && deviceinfo_system_partition_size="2800M"
-                    truncate -s "${deviceinfo_system_partition_size:-3000M}" "$OUT/rootfs.img"
-                    mkfs.ext4 -F "$OUT/rootfs.img"
+                    [ -n "$deviceinfo_rootfs_image_sector_size" ] && \
+                        sector_size_arg="-b $deviceinfo_rootfs_image_sector_size"
+
+                    mkfs.ext4 -F $sector_size_arg "$OUT/rootfs.img"
+                    # Disable orphan_file as needed when host e2fsprogs 1.47+ would create something
+                    # incompatible with e2fsck 1.45 of UBports recovery breaking 20.04 OTA updates
+		    if dumpe2fs -h "$OUT/rootfs.img" | grep -q 'orphan_file'; then
+                        tune2fs -O '^orphan_file' "$OUT/rootfs.img"
+                    fi
                 ;;
 
                 *)
@@ -213,7 +222,11 @@ do
 
                     if [ ! -z "$LOOPDEV" ] && [ ! -e "$LOOPDEV" ]; then
                         sudo mknod "$LOOPDEV" b 7 $(echo "$LOOPDEV" | grep -Eo '[0-9]+$')
-                        sudo losetup "$LOOPDEV" "$OUT/rootfs.img"
+                        if [ -n "$deviceinfo_rootfs_image_sector_size" ]; then
+                            sudo losetup -b "$deviceinfo_rootfs_image_sector_size" "$LOOPDEV" "$OUT/rootfs.img"
+                        else
+                            sudo losetup "$LOOPDEV" "$OUT/rootfs.img"
+                        fi
                         sudo mount "$LOOPDEV" "$SYSTEM_MOUNTPOINT/"
                     elif [ ! -z "$LOOPDEV" ]; then
                         sudo mount -o loop "$OUT/rootfs.img" "$SYSTEM_MOUNTPOINT/"
@@ -233,7 +246,12 @@ do
                         sudo umount "$SYSTEM_MOUNTPOINT"
                         rmdir "$SYSTEM_MOUNTPOINT"
                     else
-                        mke2fs -t ext4 -O \^metadata_csum "$OUT/rootfs.img" 3000000 -d "$SYSTEM_MOUNTPOINT"
+                        sector_size_arg=""
+                        [ -n "$deviceinfo_rootfs_image_sector_size" ] && \
+                            sector_size_arg="-b $deviceinfo_rootfs_image_sector_size"
+
+                        mke2fs -t ext4 -O \^metadata_csum $sector_size_arg "$OUT/rootfs.img" \
+                            ${deviceinfo_system_partition_size:-3584M} -d "$SYSTEM_MOUNTPOINT"
                         rm -rf "$SYSTEM_MOUNTPOINT"
                     fi
                     # Create fastboot flashable image

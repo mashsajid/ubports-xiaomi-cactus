@@ -1,6 +1,7 @@
 check-scripts:
   image: koalaman/shellcheck-alpine:latest
   stage: test
+  tags: [ "ubports" ]
   before_script:
     - apk update
     #- apk add git

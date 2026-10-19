@@ -13,12 +13,33 @@ fi
 source "${HERE}/deviceinfo"
 source "$SCRIPT/common_functions.sh"
 
+case "$deviceinfo_arch" in
+    arm) ROOTFS_ARCH="armhf" ;;
+    aarch64) ROOTFS_ARCH="arm64" ;;
+    *)
+        print_error "Unsupported architecture: '$deviceinfo_arch'"
+        exit 1
+        ;;
+esac
+
 # Fetches android9 rootfs and generic system image to prepare flashable image from CI-built device tarball
 URL='https://system-image.ubports.com'
-case "${deviceinfo_ubuntu_touch_release:-focal}" in
+case "${deviceinfo_ubuntu_touch_release:-24.04-2.x}" in
     "focal")
-        DEFAULT_ROOTFS_URL="https://ci.ubports.com/job/focal-hybris-rootfs-arm64/job/master/lastSuccessfulBuild/artifact/ubuntu-touch-android9plus-rootfs-arm64.tar.gz"
-        DEFAULT_OTA_CHANNEL="20.04/arm64/android9plus/devel"
+        DEFAULT_ROOTFS_URL="https://ci.ubports.com/job/ubuntu-touch-rootfs/job/ubports%252Ffocal/lastSuccessfulBuild/artifact/ubuntu-touch-android9plus-rootfs-$ROOTFS_ARCH.tar.gz"
+        DEFAULT_OTA_CHANNEL="20.04/$ROOTFS_ARCH/android9plus/devel"
+        ;;
+    "24.04-1.x")
+        DEFAULT_ROOTFS_URL="https://ci.ubports.com/job/ubuntu-touch-rootfs/job/ubports%252F24.04-1.x/lastSuccessfulBuild/artifact/ubuntu-touch-android9plus-rootfs-$ROOTFS_ARCH.tar.gz"
+        DEFAULT_OTA_CHANNEL="24.04-1.x/$ROOTFS_ARCH/android9plus/daily"
+        ;;
+    "24.04-2.x")
+        DEFAULT_ROOTFS_URL="https://ci.ubports.com/job/ubuntu-touch-rootfs/job/ubports%252F24.04-2.x/lastSuccessfulBuild/artifact/ubuntu-touch-android9plus-rootfs-$ROOTFS_ARCH.tar.gz"
+        DEFAULT_OTA_CHANNEL="24.04-2.x/$ROOTFS_ARCH/android9plus/daily"
+        ;;
+    "26.04-1.x")
+        DEFAULT_ROOTFS_URL="https://ci.ubports.com/job/ubuntu-touch-rootfs/job/main/lastSuccessfulBuild/artifact/ubuntu-touch-android9plus-rootfs-$ROOTFS_ARCH.tar.gz"
+        DEFAULT_OTA_CHANNEL="26.04-1.x/$ROOTFS_ARCH/android9plus/daily"
         ;;
     *)
         # Both overrides need to be specified, if no ubuntu touch release is set
@@ -51,7 +72,16 @@ case "$deviceinfo_halium_version" in
         DEVICE_GENERIC_URL="$DEVICE_GENERIC_URL_BASE/halium-12.0/lastSuccessfulBuild/artifact/halium_halium_arm64.tar.xz"
         ;;
     13)
-        DEVICE_GENERIC_URL="$DEVICE_GENERIC_URL_BASE/halium-13.0/lastSuccessfulBuild/artifact/halium_halium_arm64.tar.xz"
+        case "$deviceinfo_arch" in
+            arm) DEVICE_GENERIC_URL="$DEVICE_GENERIC_URL_BASE/halium-13.0-arm32/lastSuccessfulBuild/artifact/halium_halium_arm.tar.xz";;
+            aarch64) DEVICE_GENERIC_URL="$DEVICE_GENERIC_URL_BASE/halium-13.0/lastSuccessfulBuild/artifact/halium_halium_arm64.tar.xz";;
+        esac
+        ;;
+    14)
+        DEVICE_GENERIC_URL="$DEVICE_GENERIC_URL_BASE/halium-14.0/lastSuccessfulBuild/artifact/halium_halium_arm64.tar.xz"
+        ;;
+    15|16)
+        DEVICE_GENERIC_URL="$DEVICE_GENERIC_URL_BASE/halium-16.0/lastSuccessfulBuild/artifact/halium_halium_arm64.tar.xz"
         ;;
     *)
         print_error "Unsupported halium version: '$deviceinfo_halium_version'"

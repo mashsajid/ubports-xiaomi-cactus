@@ -70,3 +70,11 @@ void _ZNK7android6Region4dumpERNS_7String8EPKcj(const void *self, void *out, con
 {
     (void)self; (void)out; (void)what; (void)flags;
 }
+
+/*
+ * __system_properties_init: Pie vendor libs (libpdx_default_transport.so)
+ * bind it at version LIBC_PLATFORM, which Android 10 libc no longer
+ * provides (it moved to LIBC_Q). libc has already initialised the property
+ * area by the time any library is loaded, so this is a no-op.
+ */
+int __system_properties_init(void) { return 0; }

@@ -78,3 +78,29 @@ void _ZNK7android6Region4dumpERNS_7String8EPKcj(const void *self, void *out, con
  * area by the time any library is loaded, so this is a no-op.
  */
 int __system_properties_init(void) { return 0; }
+
+/*
+ * android::base::StartsWith(const std::string&, const char*)
+ * Android 10 libbase only provides the std::string_view overloads.
+ * libc++ (32-bit) std::string: long mode when bit 0 of the first byte is
+ * set -> {cap, size, data}; short mode -> size = byte0 >> 1, data at +1.
+ */
+int _ZN7android4base10StartsWithERKNSt3__112basic_stringIcNS1_11char_traitsIcEENS1_9allocatorIcEEEEPKc(
+    const void *str, const char *prefix)
+{
+    const unsigned char *b = (const unsigned char *)str;
+    const char *data;
+    uint32_t size, n = 0;
+    if (b[0] & 1) {
+        size = ((const uint32_t *)str)[1];
+        data = ((const char *const *)str)[2];
+    } else {
+        size = b[0] >> 1;
+        data = (const char *)b + 1;
+    }
+    while (prefix[n]) n++;
+    if (n > size) return 0;
+    for (uint32_t i = 0; i < n; i++)
+        if (data[i] != prefix[i]) return 0;
+    return 1;
+}

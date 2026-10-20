@@ -1,0 +1,7 @@
+MTK connectivity kernel modules for cactus, rebuilt against our 4.9.200 arm32 kernel
+(MIUI's prebuilt .ko are vermagic 4.9.117+ and were force-loaded -> SoC hang on wifi on).
+Source: github.com/MotorolaMobilityLLC/vendor-mediatek-kernel_modules-connectivity-*
+  common (wmt_drv), wlan-adaptor (wmt_chrdev_wifi), wlan-core-gen4m, gps, fmradio: branch Pie-9-release-POBS
+  bt-mt66xx: branch pie-9.0.0-release-poker
+gen4m opts: CONFIG_MTK_COMBO_WIFI_HIF=axi MTK_COMBO_CHIP=CONNAC WLAN_CHIP_ID=soc1_0 MTK_ANDROID_WMT=y
+common opts: CONFIG_MTK_COMBO_CHIP=CONSYS_6765 MTK_PLATFORM=mt6765

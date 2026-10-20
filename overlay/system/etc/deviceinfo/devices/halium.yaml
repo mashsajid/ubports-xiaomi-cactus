@@ -1,0 +1,9 @@
+# Redmi 6A (cactus): 720x1440, 5.45" (~295 ppi). The Halium default GridUnit 21
+# is too large for this panel (Settings items overflow in portrait).
+cactus:
+  Name: cactus
+  PrettyName: Redmi 6A
+  DeviceType: phone
+  GridUnit: 17
+  WebkitDpr: 2.0
+  PrimaryOrientation: Portrait

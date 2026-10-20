@@ -104,3 +104,15 @@ int _ZN7android4base10StartsWithERKNSt3__112basic_stringIcNS1_11char_traitsIcEEN
         if (data[i] != prefix[i]) return 0;
     return 1;
 }
+
+/*
+ * DisplayEventReceiver(VsyncSource, ConfigChanged): Android 10 added the second
+ * argument; Halium's libandroidfw (pulled in by libubuntu_application_api for the
+ * location service) needs it, but the Pie vendor libgui only has the one-argument
+ * constructor. The object layout is unchanged, so drop the extra argument.
+ */
+__asm__(".text\n.arm\n"
+        ".globl _ZN7android20DisplayEventReceiverC1ENS_16ISurfaceComposer11VsyncSourceENS1_13ConfigChangedE\n"
+        ".type _ZN7android20DisplayEventReceiverC1ENS_16ISurfaceComposer11VsyncSourceENS1_13ConfigChangedE,%function\n"
+        "_ZN7android20DisplayEventReceiverC1ENS_16ISurfaceComposer11VsyncSourceENS1_13ConfigChangedE:\n"
+        "\tb _ZN7android20DisplayEventReceiverC1ENS_16ISurfaceComposer11VsyncSourceE(PLT)\n");

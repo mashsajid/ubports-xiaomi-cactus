@@ -1,0 +1,2 @@
+# cactus bring-up: MIUI prebuilt gps_drv module does not match our kernel (vermagic 4.9.117 vs 4.9.200).
+# Auto-loading disabled; connectivity modules are loaded manually while porting.

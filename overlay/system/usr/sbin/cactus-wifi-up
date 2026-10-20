@@ -1,0 +1,16 @@
+#!/bin/sh
+# cactus: load the MediaTek connectivity modules (rebuilt for our kernel from
+# Motorola Pie sources, see shim/conn-modules-SOURCES.txt) and power Wi-Fi on.
+# wmt_loader/wmt_launcher in the Android container download the CONSYS patch
+# once wmt_drv is loaded; writing 1 to /dev/wmtWifi then creates wlan0.
+M=/usr/lib/cactus-conn
+gp() { /system/bin/getprop "$1" 2>/dev/null; }
+[ -e /sys/class/net/wlan0 ] && exit 0
+grep -q '^wmt_drv ' /proc/modules || insmod $M/wmt_drv.ko || exit 1
+for i in $(seq 1 90); do [ "$(gp vendor.connsys.driver.ready)" = yes ] && break; sleep 1; done
+grep -q '^wmt_chrdev_wifi ' /proc/modules || insmod $M/wmt_chrdev_wifi.ko || exit 1
+grep -q '^wlan_drv_gen4m ' /proc/modules || insmod $M/wlan_drv_gen4m.ko || exit 1
+for i in $(seq 1 30); do [ -c /dev/wmtWifi ] && break; sleep 1; done
+for i in $(seq 1 5); do echo 1 > /dev/wmtWifi && break; sleep 3; done
+for i in $(seq 1 20); do [ -e /sys/class/net/wlan0 ] && exit 0; sleep 1; done
+exit 1

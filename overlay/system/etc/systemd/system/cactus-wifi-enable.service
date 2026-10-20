@@ -1,0 +1,14 @@
+[Unit]
+Description=Load MediaTek connectivity modules and power on Wi-Fi (cactus)
+After=lxc-android-config.service
+Wants=lxc-android-config.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+TimeoutStartSec=180
+ExecStart=/usr/sbin/cactus-wifi-up
+ExecStop=-/bin/sh -c 'echo 0 > /dev/wmtWifi'
+
+[Install]
+WantedBy=multi-user.target

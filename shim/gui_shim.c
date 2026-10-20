@@ -111,8 +111,24 @@ int _ZN7android4base10StartsWithERKNSt3__112basic_stringIcNS1_11char_traitsIcEEN
  * location service) needs it, but the Pie vendor libgui only has the one-argument
  * constructor. The object layout is unchanged, so drop the extra argument.
  */
-__asm__(".text\n.arm\n"
+__asm__(".weak _ZN7android20DisplayEventReceiverC1ENS_16ISurfaceComposer11VsyncSourceE\n"  /* only in Pie vendor libgui */
+        ".text\n.arm\n"
         ".globl _ZN7android20DisplayEventReceiverC1ENS_16ISurfaceComposer11VsyncSourceENS1_13ConfigChangedE\n"
         ".type _ZN7android20DisplayEventReceiverC1ENS_16ISurfaceComposer11VsyncSourceENS1_13ConfigChangedE,%function\n"
         "_ZN7android20DisplayEventReceiverC1ENS_16ISurfaceComposer11VsyncSourceENS1_13ConfigChangedE:\n"
         "\tb _ZN7android20DisplayEventReceiverC1ENS_16ISurfaceComposer11VsyncSourceE(PLT)\n");
+
+/*
+ * GraphicBufferMapper::lock(handle, usage, bounds, vaddr) (Pie) -> Android 10's
+ * lock(..., outBytesPerPixel, outBytesPerStride) with NULLs. Used by the MTK camera
+ * HAL (libcam.client.so, whose NEEDED libui.so is patched to libux.so).
+ */
+status_t _ZN7android19GraphicBufferMapper4lockEPK13native_handlejRKNS_4RectEPPvPiS9_(
+    void *self, const void *handle, uint32_t usage, const void *bounds, void **vaddr,
+    int32_t *bpp, int32_t *bps);
+status_t _ZN7android19GraphicBufferMapper4lockEPK13native_handlejRKNS_4RectEPPv(
+    void *self, const void *handle, uint32_t usage, const void *bounds, void **vaddr)
+{
+    return _ZN7android19GraphicBufferMapper4lockEPK13native_handlejRKNS_4RectEPPvPiS9_(
+        self, handle, usage, bounds, vaddr, NULL, NULL);
+}

@@ -1,5 +1,5 @@
 #!/bin/sh
-# cactus: load the MediaTek connectivity modules (Wi-Fi + BT) (rebuilt for our kernel from
+# cactus: load the MediaTek connectivity modules (Wi-Fi, BT, GPS) (rebuilt for our kernel from
 # Motorola Pie sources, see shim/conn-modules-SOURCES.txt) and power Wi-Fi on.
 # wmt_loader/wmt_launcher in the Android container download the CONSYS patch
 # once wmt_drv is loaded; writing 1 to /dev/wmtWifi then creates wlan0.
@@ -12,6 +12,8 @@ grep -q '^wmt_chrdev_wifi ' /proc/modules || insmod $M/wmt_chrdev_wifi.ko || exi
 grep -q '^wlan_drv_gen4m ' /proc/modules || insmod $M/wlan_drv_gen4m.ko || exit 1
 # Bluetooth char device /dev/stpbt for the MTK BT HAL (bluebinder bridges it to BlueZ)
 grep -q '^bt_drv ' /proc/modules || insmod $M/bt_drv.ko
+# GPS char device /dev/stpgps for mnld
+grep -q '^gps_drv ' /proc/modules || insmod $M/gps_drv.ko
 for i in $(seq 1 30); do [ -c /dev/wmtWifi ] && break; sleep 1; done
 for i in $(seq 1 5); do echo 1 > /dev/wmtWifi && break; sleep 3; done
 for i in $(seq 1 20); do [ -e /sys/class/net/wlan0 ] && exit 0; sleep 1; done

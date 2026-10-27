@@ -1,1 +1,15 @@
 out/
+out-*/
+ota/
+ota-*/
+workdir/
+keys/
+*.img
+KERNEL_OBJ*
+logs/
+*.log
+*dump*/
+*.dmp
+nvram*/
+*nvram*.bin
+*imei*
